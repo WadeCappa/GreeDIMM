@@ -40,20 +40,43 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef RIPPLES_RRR_SETS_H
+#define RIPPLES_RRR_SETS_H
 
-#include "ripples/graph.h"
-#include "ripples/cuda/cuda_lt_kernel.cuh"
-#include "ripples/cuda/cuda_generate_rrr_sets.h"
-#include "ripples/cuda/cuda_supported_graphs.h"
+#include <vector>
 
-#include "trng/lcg64.hpp"
-
+#ifdef ENABLE_METALL_RRRSETS
+#include "metall/metall.hpp"
+#include "metall/container/vector.hpp"
+#endif
 
 namespace ripples {
+#if defined ENABLE_METALL_RRRSETS
+  template<typename vertex_type>
+  using RRRsetAllocator = metall::manager::allocator_type<vertex_type>;
 
+  metall::manager &metall_manager_instance(std::string path) {
+    static metall::manager manager(metall::create_only, path.c_str());
+    return manager;
+  }
 
-template void cuda_lt_kernel<IMMGraphTy, trng::lcg64>(size_t n_blocks, size_t block_size, size_t batch_size,
-                                                      size_t num_nodes, trng::lcg64 *d_trng_states,
-                                                      mask_word_t *d_res_masks, size_t num_mask_words,
-                                                      cuda_ctx<IMMGraphTy> *ctx, cudaStream_t stream);
+#else
+  template <typename vertex_type>
+  using RRRsetAllocator = std::allocator<vertex_type>;
+#endif
+
+  //! \brief The Random Reverse Reachability Sets type
+  template <typename GraphTy>
+  using RRRset =
+#ifdef  ENABLE_METALL_RRRSETS
+    metall::container::vector<typename GraphTy::vertex_type,
+                              RRRsetAllocator<typename GraphTy::vertex_type>>;
+#else
+  std::vector<typename GraphTy::vertex_type,
+              RRRsetAllocator<typename GraphTy::vertex_type>>;
+#endif
+  template <typename GraphTy>
+  using RRRsets = std::vector<RRRset<GraphTy>>;
 }
+
+#endif

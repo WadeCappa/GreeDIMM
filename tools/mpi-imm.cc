@@ -50,6 +50,8 @@
 #include "ripples/graph.h"
 #include "ripples/loaders.h"
 #include "ripples/mpi/imm.h"
+#include "ripples/imm_configuration.h"
+#include "ripples/imm_interface.h"
 #include "ripples/utility.h"
 
 #include "CLI/CLI.hpp"
@@ -60,6 +62,16 @@
 #include "spdlog/spdlog.h"
 
 namespace ripples {
+
+template <typename TimeTy>
+std::vector<double> ConvertToCounts(const TimeTy &times){
+  std::vector<double> counts;
+  counts.reserve(times.size());
+  for(auto time : times){
+    counts.push_back(time.count());
+  }
+  return counts;
+}
 
 template <typename SeedSet>
 auto GetExperimentRecord(const ToolConfiguration<IMMConfiguration> &CFG,
@@ -82,15 +94,19 @@ auto GetExperimentRecord(const ToolConfiguration<IMMConfiguration> &CFG,
       {"WorldSize", world_size},
       {"NumThreads", R.NumThreads},
       {"NumWalkWorkers", CFG.streaming_workers},
+      {"NumCPUTeams", CFG.streaming_cpu_teams},
       {"NumGPUWalkWorkers", CFG.streaming_gpu_workers},
-      {"Total", R.Total},
+      {"Total", R.Total.count()},
       {"ThetaPrimeDeltas", R.ThetaPrimeDeltas},
-      {"ThetaEstimation", R.ThetaEstimationTotal},
-      {"ThetaEstimationGenerateRRR", R.ThetaEstimationGenerateRRR},
-      {"ThetaEstimationMostInfluential", R.ThetaEstimationMostInfluential},
+      {"ThetaEstimation", R.ThetaEstimationTotal.count()},
+      {"ThetaEstimationGenerateRRR", ConvertToCounts(R.ThetaEstimationGenerateRRR)},
+      {"ThetaEstimationMostInfluential", ConvertToCounts(R.ThetaEstimationMostInfluential)},
       {"Theta", R.Theta},
-      {"GenerateRRRSets", R.GenerateRRRSets},
-      {"FindMostInfluentialSet", R.FindMostInfluentialSet},
+      {"Microbenchmarking", R.Microbenchmarking.count()},
+      {"CPUBatchSize", R.CPUBatchSize},
+      {"GPUBatchSize", R.GPUBatchSize},
+      {"GenerateRRRSets", R.GenerateRRRSets.count()},
+      {"FindMostInfluentialSet", R.FindMostInfluentialSet.count()},
       {"Seeds", seeds}};
   return experiment;
 }
@@ -122,7 +138,7 @@ int main(int argc, char *argv[]) {
   auto CFG = ripples::configuration();
   if (CFG.parallel) {
     if (ripples::streaming_command_line(
-            CFG.worker_to_gpu, CFG.streaming_workers, CFG.streaming_gpu_workers,
+            CFG.worker_to_gpu, CFG.streaming_workers, CFG.streaming_cpu_teams, CFG.streaming_gpu_workers,
             CFG.gpu_mapping_string) != 0) {
       console->error("invalid command line");
       return -1;
@@ -134,13 +150,38 @@ int main(int argc, char *argv[]) {
   weightGen.split(2, 0);
 
   using edge_type = ripples::WeightedDestination<uint32_t, float>;
+  #if defined ENABLE_METALL
+  using GraphFwd =
+      ripples::Graph<uint32_t, edge_type, ripples::ForwardDirection<uint32_t>, metall::manager::allocator_type<char>>;
+  using GraphBwd =
+      ripples::Graph<uint32_t, edge_type, ripples::BackwardDirection<uint32_t>, metall::manager::allocator_type<char>>;
+  #else
   using GraphFwd =
       ripples::Graph<uint32_t, edge_type, ripples::ForwardDirection<uint32_t>>;
   using GraphBwd =
       ripples::Graph<uint32_t, edge_type, ripples::BackwardDirection<uint32_t>>;
+  #endif
   console->info("Loading...");
+  #if defined ENABLE_METALL
+  bool exists = metall::manager::consistent(CFG.metall_dir.c_str());
+  metall::manager manager =
+      (exists ? metall::manager(metall::open_only, CFG.metall_dir.c_str())
+              : metall::manager(metall::create_only, CFG.metall_dir.c_str()));
+  GraphBwd *Gr;
+  if (exists) {
+    console->info("Previously existing graph exists! Loading...");
+    Gr = manager.find<GraphBwd>("graph").first;
+  } else {
+    console->info("Creating new metall directory...");
+    GraphFwd Gf =
+        ripples::loadGraph<GraphFwd>(CFG, weightGen, manager.get_allocator());
+    Gr = manager.construct<GraphBwd>("graph")(Gf.get_transpose());
+  }
+  GraphBwd &G(*Gr);
+#else
   GraphFwd Gf = ripples::loadGraph<GraphFwd>(CFG, weightGen);
   GraphBwd G = Gf.get_transpose();
+#endif
   console->info("Loading Done!");
   console->info("Number of Nodes : {}", G.num_nodes());
   console->info("Number of Edges : {}", G.num_edges());
@@ -157,13 +198,22 @@ int main(int argc, char *argv[]) {
 
   auto workers = CFG.streaming_workers;
   auto gpu_workers = CFG.streaming_gpu_workers;
+  auto cpu_teams = CFG.streaming_cpu_teams;
   if (CFG.diffusionModel == "IC") {
-    ripples::StreamingRRRGenerator<
-        decltype(G), decltype(generator),
-        typename ripples::RRRsets<decltype(G)>::iterator,
-        ripples::independent_cascade_tag>
-        se(G, generator, R, workers - gpu_workers, gpu_workers,
-           CFG.worker_to_gpu);
+    ripples::ICStreamingGenerator se(G, generator, workers - gpu_workers, cpu_teams, gpu_workers,
+    CFG.gpu_batch_size, CFG.cpu_batch_size, CFG.worker_to_gpu);
+    R.GPUBatchSize = CFG.gpu_batch_size;
+    if(CFG.cpu_batch_size){
+        R.CPUBatchSize = CFG.cpu_batch_size;
+    }
+#if defined(RIPPLES_ENABLE_CUDA) || defined(RIPPLES_ENABLE_HIP)
+    else {
+      if(se.isGpuEnabled() && cpu_teams){
+        se.benchmark(4, 4, R);
+      }
+    }
+#endif
+
     auto start = std::chrono::high_resolution_clock::now();
     seeds = ripples::mpi::IMM(
         G, CFG, 1.0, se, R, ripples::independent_cascade_tag{},
@@ -171,12 +221,8 @@ int main(int argc, char *argv[]) {
     auto end = std::chrono::high_resolution_clock::now();
     R.Total = end - start;
   } else if (CFG.diffusionModel == "LT") {
-    ripples::StreamingRRRGenerator<
-        decltype(G), decltype(generator),
-        typename ripples::RRRsets<decltype(G)>::iterator,
-        ripples::linear_threshold_tag>
-        se(G, generator, R, workers - gpu_workers, gpu_workers,
-           CFG.worker_to_gpu);
+    ripples::LTStreamingGenerator se(G, generator, workers - gpu_workers, cpu_teams, gpu_workers,
+           CFG.gpu_batch_size, CFG.cpu_batch_size, CFG.worker_to_gpu);
     auto start = std::chrono::high_resolution_clock::now();
     seeds = ripples::mpi::IMM(
         G, CFG, 1.0, se, R, ripples::linear_threshold_tag{},

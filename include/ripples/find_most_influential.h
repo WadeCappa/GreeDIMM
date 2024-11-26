@@ -59,8 +59,8 @@
 #include "spdlog/spdlog.h"
 
 #ifdef RIPPLES_ENABLE_CUDA
-#include "ripples/cuda/cuda_generate_rrr_sets.h"
-#include "ripples/cuda/find_most_influential.h"
+#include "ripples/gpu/generate_rrr_sets.h"
+#include "ripples/gpu/find_most_influential.h"
 #include "thrust/count.h"
 #include "thrust/device_ptr.h"
 #endif
@@ -166,110 +166,6 @@ auto FindMostInfluentialSet(const GraphTy &G, const ConfTy &CFG,
   record.Pivoting.push_back(pivoting);
   return std::make_pair(f, result);
 }
-
-// using TransposeRRRSets = std::unordered_map<GraphTy::vertex_type, std::unordered_set<GraphTy::vertex_type>>;
-// /// @brief 
-// /// @tparam GraphTy 
-// /// @tparam ConfTy 
-// /// @tparam RRRset 
-// /// @param G 
-// /// @param CFG 
-// /// @param RRRsets 
-// /// @param record 
-// /// @param enableGPU 
-// /// @param ex_tag 
-// /// @return 
-// template <typename GraphTy, typename ConfTy, typename RRRset>
-// auto FindMostInfluentialSetTranspose(const GraphTy &G, const ConfTy &CFG,
-//                             TransposeRRRSets &RRRSets,
-//                             IMMExecutionRecord &record, bool enableGPU,
-//                             sequential_tag &&ex_tag) {
-//   using vertex_type = typename GraphTy::vertex_type;
-//   size_t k = CFG.k;
-
-//   std::vector<uint32_t> vertexCoverage(G.num_nodes(), 0);
-
-//   auto cmp = [](std::pair<vertex_type, size_t> &a,
-//                 std::pair<vertex_type, size_t> &b) {
-//     return a.second < b.second;
-//   };
-//   using priorityQueue =
-//       std::priority_queue<std::pair<vertex_type, size_t>,
-//                           std::vector<std::pair<vertex_type, size_t>>,
-//                           decltype(cmp)>;
-
-//   std::vector<std::pair<vertex_type, size_t>> queue_storage(G.num_nodes());
-
-//   // no need to count occurences, occurences encoded in the transpose graph by length. 
-//   auto counting = measure<>::exec_time([&]() {
-//     CountOccurrencies(RRRsets.begin(), RRRsets.end(), vertexCoverage.begin(),
-//                       vertexCoverage.end(),
-//                       std::forward<sequential_tag>(ex_tag));
-//   });
-
-//   // how is a queue here helpful when the historgram changes after every new 
-//   //  seed is selected? This seems like wasted computation.
-  
-//   InitHeapStorage(vertexCoverage.begin(), vertexCoverage.end(),
-//                   queue_storage.begin(), queue_storage.end(),
-//                   std::forward<sequential_tag>(ex_tag));
-
-//   priorityQueue queue(cmp, std::move(queue_storage));
-  
-
-//   std::vector<typename GraphTy::vertex_type> result;
-//   result.reserve(k);
-
-//   // write a method to get this data, cound the number of unique verticies contained in tRRRSets. 
-//   size_t uncovered = tRRRsets.size();
-
-//   auto end = tRRRsets.end();
-//   typename IMMExecutionRecord::ex_time_ms pivoting;
-
-//   while (result.size() < k && uncovered != 0) {
-//     auto element = queue.top(); /*find largest set in tRRRSets, set element to this value*/
-//     queue.pop(); /*remove value from tRRRSets*/
-
-//     if (element.second > vertexCoverage[element.first]) {
-//       element.second = vertexCoverage[element.first];
-//       queue.push(element);
-//       continue;
-//     }
-
-//     uncovered -= element.second;
-
-//     auto cmp = [=](const RRRset &a) -> auto {
-//       return !std::binary_search(a.begin(), a.end(), element.first);
-//     };
-
-//     auto start = std::chrono::high_resolution_clock::now();
-//     auto itr = partition(RRRsets.begin(), end, cmp,
-//                          std::forward<sequential_tag>(ex_tag));
-//     pivoting += (std::chrono::high_resolution_clock::now() - start);
-
-//     counting += measure<>::exec_time([&]() {
-//       if (std::distance(itr, end) < std::distance(RRRsets.begin(), itr)) {
-//         UpdateCounters(itr, end, vertexCoverage,
-//                        std::forward<sequential_tag>(ex_tag));
-//       } else {
-//         std::fill(vertexCoverage.begin(), vertexCoverage.end(), 0);
-//         CountOccurrencies(RRRsets.begin(), itr, vertexCoverage.begin(),
-//                           vertexCoverage.end(),
-//                           std::forward<sequential_tag>(ex_tag));
-//       }
-//     });
-//     end = itr;
-//     result.push_back(element.first);
-//   }
-
-//   double f = double(RRRsets.size() - uncovered) / RRRsets.size();
-
-//   record.Counting.push_back(
-//       std::chrono::duration_cast<typename IMMExecutionRecord::ex_time_ms>(
-//           counting));
-//   record.Pivoting.push_back(pivoting);
-//   return std::make_pair(f, result);
-// }
 
 template <typename GraphTy, typename ConfTy, typename RRRset>
 auto FindMostInfluentialSet(const GraphTy &G, const ConfTy &CFG,

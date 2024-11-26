@@ -56,22 +56,51 @@ struct IMMExecutionRecord {
   struct cpu_walk_prof {
     size_t NumSets;
     ex_time_ms Total;
+
+    cpu_walk_prof()
+      : NumSets()
+      , Total() {}
   };
 
   struct gpu_walk_prof {
     size_t NumSets;
     ex_time_ms Total;
     ex_time_ns Kernel, D2H, Post;
-  };
 
-  struct walk_iteration_prof {
-    std::vector<cpu_walk_prof> CPUWalks;
-    std::vector<gpu_walk_prof> GPUWalks;
-    size_t NumSets{0};
-    ex_time_ms Total{0};
+    gpu_walk_prof()
+      : NumSets()
+      , Total(), Kernel(), D2H(), Post()
+    {}
   };
 
   unsigned int OptimalExecutionPath;
+
+  struct walk_iteration_prof {
+    std::vector<cpu_walk_prof> CPUWalks{};
+    std::vector<gpu_walk_prof> GPUWalks{};
+    size_t NumSets{0};
+    ex_time_ms Total{0};
+
+    walk_iteration_prof()
+      : CPUWalks(), GPUWalks(), NumSets(), Total() {}
+  };
+
+  IMMExecutionRecord()
+    : NumThreads()
+    , Theta()
+    , ThetaPrimeDeltas()
+    , ThetaEstimationTotal()
+    , ThetaEstimationMostInfluential()
+    , Counting()
+    , Pivoting()
+    , Microbenchmarking()
+    , CPUBatchSize(64)
+    , GPUBatchSize(64)
+    , GenerateRRRSets()
+    , FindMostInfluentialSet()
+    , Total()
+    , RRRSetSize()
+    , WalkIterations() {}
 
   //! Number of threads used during the execution.
   size_t NumThreads;
@@ -89,13 +118,19 @@ struct IMMExecutionRecord {
   std::vector<ex_time_ms> ThetaEstimationMostInfluential;
   std::vector<ex_time_ms> Counting;
   std::vector<ex_time_ms> Pivoting;
+  //! Total microbenchmarking time.
+  ex_time_ms Microbenchmarking;
+  //! CPU Batch Size
+  size_t CPUBatchSize;
+  //! GPU Batch Size
+  size_t GPUBatchSize;
   //! Execution time of the RRR sets generation phase.
   ex_time_ms GenerateRRRSets;
   //! Execution time of the maximum coverage phase.
   ex_time_ms FindMostInfluentialSet;
   //! Total execution time.
   ex_time_ms Total;
-  size_t RRRSetSize{0};
+  size_t RRRSetSize;
   //! Iterations breakdown
   std::vector<walk_iteration_prof> WalkIterations;
 };

@@ -40,43 +40,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef RIPPLES_MPI_IMM_H
-#define RIPPLES_MPI_IMM_H
+#ifndef RIPPLES_MPI_IMM_GREED_H
+#define RIPPLES_MPI_IMM_GREED_H
 
-#include "mpi.h"
-
-#include <cstddef>
-#include <utility>
-#include <vector>
-#include <unordered_map>
-#include <unordered_set>
-#include <set>
-#include <map>
-#include <thread>
-
-#include "trng/lcg64.hpp"
-
-#include "ripples/generate_rrr_sets.h"
-#include "ripples/imm.h"
-#include "ripples/imm_execution_record.h"
-#include "ripples/mpi/find_most_influential.h"
-#include "ripples/utility.h"
-
-#include "ripples/generate_rrr_sets.h"
-#include "ripples/mpi/communication_engine.h"
-#include "ripples/TimerAggregator.h"
+#include "communication_engine.h"
+#include "ripples/sampler_context.h"
+#include "ripples/mpi/ownership_manager.h"
 #include "ripples/max_k_cover.h"
-
-#include <time.h>
-#include <cstdlib>
-#include <numeric>
-#include <random>
-#include "ripples/imm_execution_record.h"
-
 #include "ripples/mpi/streaming_engine.h"
 #include "ripples/mpi/approximator_context.h"
-#include "ripples/mpi/ownership_manager.h"
-#include "ripples/sampler_context.h"
+#include "ripples/mpi/approximator_group.h"
 #include "ripples/mpi/martingale_context.h"
 #include "ripples/mpi/martingale_builder.h"
 

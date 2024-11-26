@@ -4,6 +4,15 @@
 build/
 /.waf*
 *~
+Pipfile.lock
+*.csv
+output.json
+*.png
+hpc*/
+results*
+scripts/
+core
+.venv/
 
 docs/api
 
@@ -79,8 +88,5 @@ local.properties
 .apt_generated
 
 .sts4-cache/
-
-# vscode
-.vscode
 
 # End of https://www.gitignore.io/api/eclipse

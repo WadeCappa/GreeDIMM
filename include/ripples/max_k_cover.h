@@ -363,7 +363,7 @@ template <typename GraphTy>
 class StreamingMaxKCover : public MaxKCoverBase<GraphTy>
 {
 private:
-    const CommunicationEngine<GraphTy> &cEngine;
+    const ripples::mpi::CommunicationEngine<GraphTy> &cEngine;
     MPI_Request request;
     std::vector<std::vector<unsigned int>> send_buffers;
 
@@ -469,7 +469,7 @@ private:
         int kprime, 
         size_t theta,
         TimerAggregator &timer,
-        const CommunicationEngine<GraphTy> &cEngine
+        const ripples::mpi::CommunicationEngine<GraphTy> &cEngine
     ) : MaxKCoverBase<GraphTy>(k, kprime, theta, timer), cEngine(cEngine), send_buffers(kprime)
     {}
 

@@ -47,62 +47,23 @@
 #include <queue>
 #include <utility>
 #include <vector>
-#include <unordered_map>
-#include <unordered_set>
-#include <mutex>
 
 #include "omp.h"
-#include "transposeRRRSets.h"
 
 #include "ripples/diffusion_simulation.h"
 #include "ripples/graph.h"
 #include "ripples/imm_execution_record.h"
 #include "ripples/utility.h"
+#include "ripples/rrr_sets.h"
+#include "ripples/add_rrrset.h"
 #include "ripples/streaming_rrr_generator.h"
 
 #include "trng/uniform01_dist.hpp"
 #include "trng/uniform_int_dist.hpp"
 
-#ifdef ENABLE_MEMKIND
-#include "memkind_allocator.h"
-#endif
-
-#ifdef ENABLE_METALL
-#include "metall/metall.hpp"
-#include "metall/container/vector.hpp"
-#endif
 
 namespace ripples {
-
-#if defined ENABLE_MEMKIND
-template<typename vertex_type>
-using RRRsetAllocator = libmemkind::static_kind::allocator<vertex_type>;
-#elif defined ENABLE_METALL
-template<typename vertex_type>
-using RRRsetAllocator = metall::manager::allocator_type<vertex_type>;
-
-metall::manager &metall_manager_instance() {
-  static metall::manager manager(metall::create_only, "/tmp/ripples");
-  return manager;
-}
-
-#else
-template <typename vertex_type>
-using RRRsetAllocator = std::allocator<vertex_type>;
-#endif
-
-//! \brief The Random Reverse Reachability Sets type
-template <typename GraphTy>
-using RRRset =
-#ifdef  ENABLE_METALL
-    metall::container::vector<typename GraphTy::vertex_type,
-                              RRRsetAllocator<typename GraphTy::vertex_type>>;
-#else
-    std::vector<typename GraphTy::vertex_type,
-                              RRRsetAllocator<typename GraphTy::vertex_type>>;
-#endif
-template <typename GraphTy>
-using RRRsets = std::vector<RRRset<GraphTy>>;
+#if 0
 
 //! \brief Execute a randomize BFS to generate a Random RR Set.
 //!
@@ -164,16 +125,8 @@ void AddRRRSet(const GraphTy &G, typename GraphTy::vertex_type r,
 
   std::stable_sort(result.begin(), result.end());
 }
+#endif
 
-/// @brief 
-/// @tparam GraphTy 
-/// @tparam PRNGeneratorTy 
-/// @tparam diff_model_tag 
-/// @param G 
-/// @param r 
-/// @param generator 
-/// @param result 
-/// @param tag 
 template <typename GraphTy, typename PRNGeneratorTy, typename diff_model_tag>
 void AddTransposeRRRSet(TransposeRRRSets<GraphTy> &tRRRSets, const GraphTy &G, typename GraphTy::vertex_type r,
                PRNGeneratorTy &generator,
@@ -253,62 +206,6 @@ void GenerateRRRSets(GraphTy &G, PRNGeneratorTy &generator,
   }
 }
 
-/// @brief 
-/// @param G 
-/// @param generator 
-/// @param begin 
-/// @param end 
-/// @param  
-/// @param model_tag 
-/// @param ex_tag 
-// template <typename GraphTy, typename PRNGeneratorTy,
-//           typename ItrTy, typename ExecRecordTy,
-//           typename diff_model_tag>
-// void GenerateTransposeRRRSets(TransposeRRRSets<GraphTy> &transposeRRRSets, 
-//                      const GraphTy &G, PRNGeneratorTy &generator,
-//                      ItrTy begin, ItrTy end,
-//                      ExecRecordTy &,
-//                      diff_model_tag &&model_tag,
-//                      sequential_tag &&ex_tag) {
-//   trng::uniform_int_dist start(0, G.num_nodes());
-
-//   int index = 0;
-//   for (auto itr = begin; itr < end; ++itr, index++) {
-//     typename GraphTy::vertex_type r = start(generator[0]);
-//     AddTransposeRRRSet(transposeRRRSets, G, r, generator[0], *itr,
-//               std::forward<diff_model_tag>(model_tag), index);
-//   }
-// }
-
-//! \brief Generate Random Reverse Reachability Sets - CUDA.
-//!
-//! \tparam GraphTy The type of the garph.
-//! \tparam PRNGeneratorty The type of the random number generator.
-//! \tparam ItrTy A random access iterator type.
-//! \tparam ExecRecordTy The type of the execution record
-//! \tparam diff_model_tag The policy for the diffusion model.
-//!
-//! \param G The original graph.
-//! \param generator The random numeber generator.
-//! \param begin The start of the sequence where to store RRR sets.
-//! \param end The end of the sequence where to store RRR sets.
-//! \param model_tag The diffusion model tag.
-//! \param ex_tag The execution policy tag.
-template <typename GraphTy, typename PRNGeneratorTy,
-          typename ItrTy, typename ExecRecordTy,
-          typename diff_model_tag>
-void GenerateTransposeRRRSets(
-                     TransposeRRRSets<GraphTy> &transposeRRRSets,
-                     size_t current_sets,
-                     size_t delta,
-                     const GraphTy &G,
-                     StreamingRRRGenerator<GraphTy, PRNGeneratorTy, ItrTy, diff_model_tag> &se,
-                     ExecRecordTy &,
-                     diff_model_tag &&,
-                     omp_parallel_tag &&) {
-  se.transposeGenerate(transposeRRRSets, current_sets, delta);
-}
-
 //! \brief Generate Random Reverse Reachability Sets - CUDA.
 //!
 //! \tparam GraphTy The type of the garph.
@@ -329,12 +226,11 @@ template <typename GraphTy, typename PRNGeneratorTy,
 void GenerateRRRSets(const GraphTy &G,
                      StreamingRRRGenerator<GraphTy, PRNGeneratorTy, ItrTy, diff_model_tag> &se,
                      ItrTy begin, ItrTy end,
-                     ExecRecordTy &,
+                     ExecRecordTy & record,
                      diff_model_tag &&,
                      omp_parallel_tag &&) {
-  se.generate(begin, end);
+  se.generate(begin, end, record);
 }
-
 }  // namespace ripples
 
 #endif  // RIPPLES_GENERATE_RRR_SETS_H

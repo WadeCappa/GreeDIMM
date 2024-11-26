@@ -1,3 +1,6 @@
+#ifndef RIPPLES_MPI_STREAMING_ENGINE_H
+#define RIPPLES_MPI_STREAMING_ENGINE_H
+
 #include <vector>
 #include <unordered_set>
 #include <set>
@@ -10,12 +13,14 @@
 #include <math.h>
 #include <algorithm>
 #include <deque>
-#include "ripples/bitmask.h"
 
 #include <thread>
 #include <future>
 
 #include <cmath>
+
+namespace ripples {
+namespace mpi {
 
 typedef struct origin {
     int source;
@@ -470,3 +475,8 @@ class StreamingRandGreedIEngine
         return bestSeeds;
     }
 };
+
+}
+
+}
+#endif  

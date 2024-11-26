@@ -1,10 +1,8 @@
-#include "ripples/generate_rrr_sets.h"
-#include "ripples/mpi/find_most_influential.h"
-#include "ripples/utility.h"
-#include "ripples/mpi/imm.h"
-#include "ripples/imm_execution_record.h"
-#include "ripples/imm.h"
-#include "ripples/bitmask.h"
+#ifndef RIPPLES_MPI_MARTINGALE_CONTEXT_H 
+#define RIPPLES_MPI_MARTINGALE_CONTEXT_H
+
+namespace ripples {
+namespace mpi {
 
 template <
     typename GraphTy,
@@ -443,3 +441,7 @@ class MartingaleContext {
         return std::vector<unsigned int>();
     }
 };
+
+}
+}
+#endif

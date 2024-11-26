@@ -55,6 +55,8 @@ namespace ripples {
 //! input graphs.
 struct GraphInputConfiguration {
   std::string IFileName{""};        //!< The input file name
+  std::string metall_dir{"/tmp/graph"}; //!< Where is the metall directory?
+  std::string rr_dir{"/tmp/rr"};    //!< Where is the rr directory?
   bool weighted{false};             //!< is Graph weighted?
   bool undirected{false};           //!< is Graph undirected?
   bool disable_renumbering{false};  //!< trust the input to be clean.
@@ -72,6 +74,11 @@ struct GraphInputConfiguration {
                    "The input file with the edge-list.")
         ->group("Input Options")
         ->required();
+    app.add_flag("--metall-store-dir", metall_dir,
+                    "Directory to store metall graph data.")
+        ->group("Input Options");
+    app.add_flag("--rr-store-dir", rr_dir, "Directory to store RR data.")
+        ->group("Input Options");
     app.add_flag("--reload-binary", reload, "Reload a graph from binary input")
         ->group("Input Options");
     app.add_flag("-u,--undirected", undirected, "The input graph is undirected")
@@ -118,6 +125,7 @@ struct OutputConfiguration {
 //! parameter of the Inf-Max problem.
 struct AlgorithmConfiguration {
   size_t k{10};                      //!< The size of the seedset
+  size_t num_rr_sets{0};             //!< The number of RR sets to generate, if overriding Theta.
   bool parallel{false};              //!< The sequential vs parallel algorithm
   std::string diffusionModel{"IC"};  //!< The diffusion model to use.
 
@@ -130,6 +138,9 @@ struct AlgorithmConfiguration {
         ->group("Algorithm Options");
     app.add_flag("-p,--parallel", parallel,
                  "Trigger the parallel implementation")
+        ->group("Algorithm Options");
+    app.add_option("--rrsets", num_rr_sets,
+                 "Manually set the number of RR sets")
         ->group("Algorithm Options");
     app.add_option("-d,--diffusion-model", diffusionModel,
                    "The diffusion model to use (LT|IC)")

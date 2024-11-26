@@ -46,16 +46,13 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
-#include <set>
 #include <unordered_map>
 #include <vector>
 
-#include "nlohmann/json.hpp"
 #include "trng/lcg64.hpp"
 #include "trng/uniform01_dist.hpp"
 #include "trng/uniform_int_dist.hpp"
 
-#include "ripples/configuration.h"
 #include "ripples/find_most_influential.h"
 #include "ripples/generate_rrr_sets.h"
 #include "ripples/imm_execution_record.h"
@@ -67,72 +64,6 @@
 #define CUDA_PROFILE 0
 
 namespace ripples {
-
-//! The IMM algorithm configuration descriptor.
-struct IMMConfiguration : public TIMConfiguration {
-  size_t streaming_workers{0};
-  size_t streaming_gpu_workers{0};
-  size_t seed_select_max_workers{std::numeric_limits<size_t>::max()};
-  size_t seed_select_max_gpu_workers{0};
-  bool dump_sampling_data_flag{false};
-  double epsilon_2 = 0.13; 
-  double alpha = 1;
-  bool use_diimm = false;
-  bool verbose = false;
-  std::string branching_factors = "";
-  int use_opimc = -1;
-  bool use_pessimistic_approximation = false;
-
-  std::string gpu_mapping_string{""};
-  std::unordered_map<size_t, size_t> worker_to_gpu;
-
-  //! \brief Add command line options to configure IMM.
-  //!
-  //! \param app The command-line parser object.
-  void addCmdOptions(CLI::App &app) {
-    TIMConfiguration::addCmdOptions(app);
-    app.add_option(
-           "--streaming-gpu-workers", streaming_gpu_workers,
-           "The number of GPU workers for the CPU+GPU streaming engine.")
-        ->group("Streaming-Engine Options");
-    app.add_option("--streaming-gpu-mapping", gpu_mapping_string,
-                   "A comma-separated set of OpenMP numbers for GPU workers.")
-        ->group("Streaming-Engine Options");
-    app.add_option("--seed-select-max-workers", seed_select_max_workers,
-                   "The max number of workers for seed selection.")
-        ->group("Streaming-Engine Options");
-    app.add_option("--seed-select-max-gpu-workers", seed_select_max_gpu_workers,
-                   "The max number of GPU workers for seed selection.")
-        ->group("Streaming-Engine Options");
-    app.add_option("--dump-sampling-data", dump_sampling_data_flag, "Output all sampling data to your output file")
-        ->group("Streaming-Engine Options");
-    app.add_option("--epsilon-2", epsilon_2,
-                   "Set the error parameter for the streaming step. Default of 0.13 to acheive approximation garuntee of 21%")
-        ->group("Streaming-Engine Options");
-    app.add_option("--alpha", alpha,
-                "Set the fraction of local seeds to send to the final selection step, defaults to 1")
-        ->group("Streaming-Engine Options");
-    app.add_option("--DIiMM", use_diimm,
-                "Use the 2022 DIiMM algorithm to approximate influence maximization")
-        ->group("Streaming-Engine Options");
-    app.add_option("--verbose", verbose,
-                "Output more granular runtime data")
-        ->group("Streaming-Engine Options");
-    app.add_option("--branching-factors", branching_factors,
-                "Provide a set of branching factors. The most optimal will be determined at runtime. Format as '.' delimited string, such as \"2.4.8.16\". Defaults empty.")
-        ->group("Streaming-Engine Options"); // todo: figure out if you can change the group without breaking anything
-    app.add_option("--opimc", use_opimc,
-                "Use OPIM-C instead of IMM. Set to -1 by default which means it will not be used. Mode 0 uses a pessimistic but easy to calculate upper bound. Mode 1 uses a more optimistic upper bound but is harder to calculate.")
-        ->group("Streaming-Engine Options"); // todo: figure out if you can change the group without breaking anything
-    app.add_option("--pessimistic_approximation", use_pessimistic_approximation,
-                "Sets the exit condition value to the highest possible approximation.")
-        ->group("Streaming-Engine Options"); // todo: figure out if you can change the group without breaking anything
-  }
-};
-
-//! Retrieve the configuration parsed from command line.
-//! \return the configuration parsed from command line.
-ToolConfiguration<ripples::IMMConfiguration> configuration();
 
 //! Approximate logarithm of n chose k.
 //! \param n
@@ -212,17 +143,14 @@ auto Sampling(const GraphTy &G, const ConfTy &CFG, double l,
   double epsilonPrime = 1.4142135623730951 * epsilon;
 
   double LB = 0;
-  #if defined ENABLE_MEMKIND
-  RRRsetAllocator<vertex_type> allocator(libmemkind::kinds::DAX_KMEM_PREFERRED);
-  #elif defined ENABLE_METALL
-  RRRsetAllocator<vertex_type> allocator =  metall_manager_instance().get_allocator();
+  #if defined ENABLE_METALL_RRRSETS
+  RRRsetAllocator<vertex_type> allocator =  metall_manager_instance(CFG.rr_dir).get_allocator();
   #else
   RRRsetAllocator<vertex_type> allocator;
   #endif
   std::vector<RRRset<GraphTy>> RR;
 
   auto start = std::chrono::high_resolution_clock::now();
-  size_t thetaPrime = 0;
   for (ssize_t x = 1; x < std::log2(G.num_nodes()); ++x) {
     // Equation 9
     ssize_t thetaPrime = ThetaPrime(x, epsilonPrime, l, k, G.num_nodes(),
@@ -298,17 +226,14 @@ auto Sampling(const GraphTy &G, const ConfTy &CFG, double l,
   double epsilonPrime = 1.4142135623730951 * epsilon;
 
   double LB = 0;
-  #if defined ENABLE_MEMKIND
-  RRRsetAllocator<vertex_type> allocator(libmemkind::kinds::DAX_KMEM_PREFERRED);
-  #elif defined ENABLE_METALL
-  RRRsetAllocator<vertex_type> allocator =  metall_manager_instance().get_allocator();
-#else
+  #if defined ENABLE_METALL_RRRSETS
+  RRRsetAllocator<vertex_type> allocator =  metall_manager_instance(CFG.rr_dir).get_allocator();
+  #else
   RRRsetAllocator<vertex_type> allocator;
   #endif
   std::vector<RRRset<GraphTy>> RR;
 
   auto start = std::chrono::high_resolution_clock::now();
-  size_t thetaPrime = 0;
   for (ssize_t x = 1; x < std::log2(G.num_nodes()); ++x) {
     // Equation 9
     ssize_t thetaPrime = ThetaPrime(x, epsilonPrime, l, k, G.num_nodes(),
@@ -368,207 +293,6 @@ auto Sampling(const GraphTy &G, const ConfTy &CFG, double l,
   return RR;
 }
 
-/// @brief 
-/// @tparam GraphTy 
-/// @tparam ConfTy 
-/// @tparam RRRGeneratorTy 
-/// @tparam diff_model_tag 
-/// @param G 
-/// @param CFG 
-/// @param l 
-/// @param generator 
-/// @param record 
-/// @param model_tag 
-/// @param ex_tag 
-/// @return 
-template <typename GraphTy, typename ConfTy, typename RRRGeneratorTy,
-          typename diff_model_tag>
-TransposeRRRSets<GraphTy> TransposeSampling(const GraphTy &G, const ConfTy &CFG, double l,
-              RRRGeneratorTy &generator, IMMExecutionRecord &record,
-              diff_model_tag &&model_tag, sequential_tag &&ex_tag) {
-  using vertex_type = typename GraphTy::vertex_type;
-  size_t k = CFG.k;
-  double epsilon = CFG.epsilon;
-
-  // sqrt(2) * epsilon
-  double epsilonPrime = 1.4142135623730951 * epsilon;
-
-  TransposeRRRSets<GraphTy> result = TransposeRRRSets<GraphTy>(G.num_nodes());
-
-  double LB = 0;
-  #if defined ENABLE_MEMKIND
-  RRRsetAllocator<vertex_type> allocator(libmemkind::kinds::DAX_KMEM_PREFERRED);
-  #elif defined ENABLE_METALL
-  RRRsetAllocator<vertex_type> allocator =  metall_manager_instance().get_allocator();
-#else
-  RRRsetAllocator<vertex_type> allocator;
-  #endif
-  std::vector<RRRset<GraphTy>> RR;
-
-  auto start = std::chrono::high_resolution_clock::now();
-  size_t thetaPrime = 0;
-  for (ssize_t x = 1; x < std::log2(G.num_nodes()); ++x) {
-    // Equation 9
-    ssize_t thetaPrime = ThetaPrime(x, epsilonPrime, l, k, G.num_nodes(),
-                                    std::forward<sequential_tag>(ex_tag));
-
-    size_t delta = thetaPrime - RR.size();
-    record.ThetaPrimeDeltas.push_back(delta);
-
-    auto timeRRRSets = measure<>::exec_time([&]() {
-      RR.insert(RR.end(), delta, RRRset<GraphTy>(allocator));
-
-      auto begin = RR.end() - delta;
-
-      GenerateTransposeRRRSets(result, G, generator, begin, RR.end(), record,
-                      std::forward<diff_model_tag>(model_tag),
-                      std::forward<sequential_tag>(ex_tag));
-    });
-    record.ThetaEstimationGenerateRRR.push_back(timeRRRSets);
-
-    double f;
-
-    auto timeMostInfluential = measure<>::exec_time([&]() {
-      const auto &S = FindMostInfluentialSet(
-          G, CFG, RR, record, false, std::forward<sequential_tag>(ex_tag));
-
-      f = S.first;
-    });
-
-    record.ThetaEstimationMostInfluential.push_back(timeMostInfluential);
-
-    if (f >= std::pow(2, -x)) {
-      LB = (G.num_nodes() * f) / (1 + epsilonPrime);
-      break;
-    }
-  }
-
-  size_t theta = Theta(epsilon, l, k, LB, G.num_nodes());
-  auto end = std::chrono::high_resolution_clock::now();
-
-  record.ThetaEstimationTotal = end - start;
-
-  record.Theta = theta;
-
-  record.GenerateRRRSets = measure<>::exec_time([&]() {
-    if (theta > RR.size()) {
-      size_t final_delta = theta - RR.size();
-      RR.insert(RR.end(), final_delta, RRRset<GraphTy>(allocator));
-
-      auto begin = RR.end() - final_delta;
-
-      GenerateTransposeRRRSets(result, G, generator, begin, RR.end(), record,
-                      std::forward<diff_model_tag>(model_tag),
-                      std::forward<sequential_tag>(ex_tag));
-    }
-  });
-
-  return result;
-}
-
-//! Collect a set of Random Reverse Reachable set.
-//!
-//! \tparam GraphTy The type of the input graph.
-//! \tparam RRRGeneratorTy The type of the RRR generator.
-//! \tparam diff_model_tag Type-Tag to selecte the diffusion model.
-//! \tparam execution_tag Type-Tag to select the execution policy.
-//!
-//! \param G The input graph.  The graph is transoposed.
-//! \param k The size of the seed set.
-//! \param epsilon The parameter controlling the approximation guarantee.
-//! \param l Parameter usually set to 1.
-//! \param generator The rrr sets generator.
-//! \param record Data structure storing timing and event counts.
-//! \param model_tag The diffusion model tag.
-//! \param ex_tag The execution policy tag.
-template <typename GraphTy, typename ConfTy, typename RRRGeneratorTy,
-          typename diff_model_tag, typename execution_tag>
-TransposeRRRSets<GraphTy> TransposeSampling(const GraphTy &G, const ConfTy &CFG, double l,
-              RRRGeneratorTy &generator, IMMExecutionRecord &record,
-              diff_model_tag &&model_tag, execution_tag &&ex_tag) {
-  using vertex_type = typename GraphTy::vertex_type;
-  size_t k = CFG.k;
-  double epsilon = CFG.epsilon;
-
-  // sqrt(2) * epsilon
-  double epsilonPrime = 1.4142135623730951 * epsilon;
-
-  double LB = 0;
-  #if defined ENABLE_MEMKIND
-  RRRsetAllocator<vertex_type> allocator(libmemkind::kinds::DAX_KMEM_PREFERRED);
-  #elif defined ENABLE_METALL
-  RRRsetAllocator<vertex_type> allocator =  metall_manager_instance().get_allocator();
-  #else
-  RRRsetAllocator<vertex_type> allocator;
-  #endif
-  std::vector<RRRset<GraphTy>> RR;
-
-  TransposeRRRSets<GraphTy> result = new TransposeRRRSets<GraphTy>(G.num_nodes());
-
-  auto start = std::chrono::high_resolution_clock::now();
-  size_t thetaPrime = 0;
-  for (ssize_t x = 1; x < std::log2(G.num_nodes()); ++x) {
-    // Equation 9
-    ssize_t thetaPrime = ThetaPrime(x, epsilonPrime, l, k, G.num_nodes(),
-                                    std::forward<execution_tag>(ex_tag));
-
-    size_t delta = thetaPrime - RR.size();
-    record.ThetaPrimeDeltas.push_back(delta);
-
-    auto timeRRRSets = measure<>::exec_time([&]() {
-      RR.insert(RR.end(), delta, RRRset<GraphTy>(allocator));
-
-      auto begin = RR.end() - delta;
-
-      GenerateTransposeRRRSets(result, G, generator, begin, RR.end(), record,
-                      std::forward<diff_model_tag>(model_tag),
-                      std::forward<execution_tag>(ex_tag));
-    });
-    record.ThetaEstimationGenerateRRR.push_back(timeRRRSets);
-
-    double f;
-
-    auto timeMostInfluential = measure<>::exec_time([&]() {
-      const auto &S =
-          FindMostInfluentialSet(G, CFG, RR, record, generator.isGpuEnabled(),
-                                 std::forward<execution_tag>(ex_tag));
-
-      f = S.first;
-    });
-
-    record.ThetaEstimationMostInfluential.push_back(timeMostInfluential);
-
-    if (f >= std::pow(2, -x)) {
-      // std::cout << "Fraction " << f << std::endl;
-      LB = (G.num_nodes() * f) / (1 + epsilonPrime);
-      break;
-    }
-  }
-
-  size_t theta = Theta(epsilon, l, k, LB, G.num_nodes());
-  auto end = std::chrono::high_resolution_clock::now();
-
-  record.ThetaEstimationTotal = end - start;
-
-  record.Theta = theta;
-  spdlog::get("console")->info("Theta {}", theta);
-
-  record.GenerateRRRSets = measure<>::exec_time([&]() {
-    if (theta > RR.size()) {
-      size_t final_delta = theta - RR.size();
-      RR.insert(RR.end(), final_delta, RRRset<GraphTy>(allocator));
-
-      auto begin = RR.end() - final_delta;
-      GenerateTransposeRRRSets(result, G, generator, begin, RR.end(), record,
-                      std::forward<diff_model_tag>(model_tag),
-                      std::forward<execution_tag>(ex_tag));
-    }
-  });
-
-  return result;
-}
-
-
 //! The IMM algroithm for Influence Maximization
 //!
 //! \tparam GraphTy The type of the input graph.
@@ -584,7 +308,7 @@ TransposeRRRSets<GraphTy> TransposeSampling(const GraphTy &G, const ConfTy &CFG,
 //! \param ex_tag The execution policy tag.
 template <typename GraphTy, typename ConfTy, typename PRNG,
           typename diff_model_tag>
-auto IMM(const GraphTy &G, const ConfTy &CFG, double l, PRNG &gen,
+std::vector<typename GraphTy::vertex_type> IMM(const GraphTy &G, const ConfTy &CFG, double l, PRNG &gen,
          IMMExecutionRecord &record, diff_model_tag &&model_tag,
          sequential_tag &&ex_tag) {
   using vertex_type = typename GraphTy::vertex_type;
@@ -616,118 +340,6 @@ auto IMM(const GraphTy &G, const ConfTy &CFG, double l, PRNG &gen,
   return S.second;
 }
 
-
-/// @brief 
-/// @tparam GraphTy 
-/// @tparam ConfTy 
-/// @tparam PRNG 
-/// @tparam diff_model_tag 
-/// @param G 
-/// @param CFG 
-/// @param l 
-/// @param gen 
-/// @param record 
-/// @param model_tag 
-/// @param ex_tag 
-/// @return 
-template <typename GraphTy, typename ConfTy, typename PRNG,
-          typename diff_model_tag>
-auto TransposeIMM(const GraphTy &G, const ConfTy &CFG, double l, PRNG &gen,
-         IMMExecutionRecord &record, diff_model_tag &&model_tag,
-         sequential_tag &&ex_tag) {
-  using vertex_type = typename GraphTy::vertex_type;
-  size_t k = CFG.k;
-  double epsilon = CFG.epsilon;
-
-  std::vector<trng::lcg64> generator(1, gen);
-
-  l = l * (1 + 1 / std::log2(G.num_nodes()));
-
-  TransposeRRRSets<GraphTy> tRRR = TransposeSampling(G, CFG, l, generator, record,
-                    std::forward<diff_model_tag>(model_tag),
-                    std::forward<sequential_tag>(ex_tag));
-
-#if CUDA_PROFILE
-  auto logst = spdlog::stdout_color_st("IMM-profile");
-  std::vector<size_t> rrr_sizes;
-  for (auto &rrr_set : R) rrr_sizes.push_back(rrr_set.size());
-  print_profile_counter(logst, rrr_sizes, "RRR sizes");
-#endif
-
-  auto start = std::chrono::high_resolution_clock::now();
-  const auto &S = FindMostInfluentialSet(G, CFG, tRRR, record, false,
-                                         std::forward<sequential_tag>(ex_tag));
-  auto end = std::chrono::high_resolution_clock::now();
-
-  record.FindMostInfluentialSet = end - start;
-
-  return S.second;
-}
-
-
-// //! The IMM algroithm for Influence Maximization
-// //!
-// //! \tparam GraphTy The type of the input graph.
-// //! \tparam ConfTy The configuration type
-// //! \tparam PRNG The type of the parallel random number generator.
-// //! \tparam diff_model_tag Type-Tag to selecte the diffusion model.
-// //! \tparam execution_tag Type-Tag to select the execution policy.
-// //!
-// //! \param G The input graph.  The graph is transoposed.
-// //! \param CFG The configuration.
-// //! \param l Parameter usually set to 1.
-// //! \param gen The parallel random number generator.
-// //! \param model_tag The diffusion model tag.
-// //! \param ex_tag The execution policy tag.
-// template <typename GraphTy, typename ConfTy, typename GeneratorTy,
-//           typename diff_model_tag>
-// auto TransposeFirstIMM(const GraphTy &G, const ConfTy &CFG, double l, GeneratorTy &gen,
-//          diff_model_tag &&model_tag, omp_parallel_tag &&ex_tag) {
-//   using vertex_type = typename GraphTy::vertex_type;
-//   size_t k = CFG.k;
-//   double epsilon = CFG.epsilon;
-//   auto &record(gen.execution_record());
-
-//   l = l * (1 + 1 / std::log2(G.num_nodes()));
-
-//   TransposeRRRSets<GraphTy> tRRR = TransposeSampling(G, CFG, l, gen, record,
-//                     std::forward<diff_model_tag>(model_tag),
-//                     std::forward<omp_parallel_tag>(ex_tag));
-
-// #if CUDA_PROFILE
-//   auto logst = spdlog::stdout_color_st("IMM-profile");
-//   std::vector<size_t> rrr_sizes;
-//   size_t sizeBytes = 0;
-//   for (auto &rrr_set : R) {
-//     rrr_sizes.push_back(rrr_set.size());
-//     sizeBytes += rrr_set.size() * sizeof(rrr_set[0]);
-//   }
-//   record.RRRSetSize = sizeBytes;
-//   print_profile_counter(logst, rrr_sizes, "RRR sizes");
-// #endif
-
-//   auto start = std::chrono::high_resolution_clock::now();
-//   const auto &S =
-//       FindMostInfluentialSet(G, CFG, R, record, gen.isGpuEnabled(),
-//                              std::forward<omp_parallel_tag>(ex_tag));
-//   auto end = std::chrono::high_resolution_clock::now();
-
-//   record.FindMostInfluentialSet = end - start;
-
-//   start = std::chrono::high_resolution_clock::now();
-//   size_t total_size = 0;
-// #pragma omp parallel for reduction(+:total_size)
-//   for (size_t i = 0; i < R.size(); ++i) {
-//     total_size += R[i].size() * sizeof(vertex_type);
-//   }
-//   record.RRRSetSize = total_size;
-//   end = std::chrono::high_resolution_clock::now();
-//   record.Total = end - start;
-
-//   // return S.second;
-// }
-
-
 //! The IMM algroithm for Influence Maximization
 //!
 //! \tparam GraphTy The type of the input graph.
@@ -744,12 +356,11 @@ auto TransposeIMM(const GraphTy &G, const ConfTy &CFG, double l, PRNG &gen,
 //! \param ex_tag The execution policy tag.
 template <typename GraphTy, typename ConfTy, typename GeneratorTy,
           typename diff_model_tag>
-auto IMM(const GraphTy &G, const ConfTy &CFG, double l, GeneratorTy &gen,
-         diff_model_tag &&model_tag, omp_parallel_tag &&ex_tag) {
+std::vector<typename GraphTy::vertex_type> IMM(const GraphTy &G, const ConfTy &CFG, double l, GeneratorTy &gen,
+                                               IMMExecutionRecord& record, diff_model_tag &&model_tag, omp_parallel_tag &&ex_tag) {
   using vertex_type = typename GraphTy::vertex_type;
   size_t k = CFG.k;
   double epsilon = CFG.epsilon;
-  auto &record(gen.execution_record());
 
   l = l * (1 + 1 / std::log2(G.num_nodes()));
 

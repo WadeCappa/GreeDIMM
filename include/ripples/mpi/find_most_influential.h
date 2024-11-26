@@ -43,13 +43,21 @@
 #ifndef RIPPLES_MPI_FIND_MOST_INFLUENTIAL_H
 #define RIPPLES_MPI_FIND_MOST_INFLUENTIAL_H
 
-#include "ripples/find_most_influential.h"
-#include "ripples/streaming_find_most_influential.h"
-#include "ripples/utility.h"
-#if RIPPLES_ENABLE_CUDA
-#include "ripples/cuda/cuda_utils.h"
+#include "ripples/generate_rrr_sets.h"
+#include "ripples/partition.h"
+
+#if defined(RIPPLES_ENABLE_CUDA) || defined(RIPPLES_ENABLE_HIP)
+#include "ripples/gpu/find_most_influential.h"
+#include "ripples/gpu/gpu_graph.h"
+#include "ripples/gpu/gpu_runtime_trait.h"
 #endif
 #include "spdlog/spdlog.h"
+
+#if defined(RIPPLES_ENABLE_CUDA)
+#define RUNTIME CUDA
+#elif defined(RIPPLES_ENABLE_HIP)
+#define RUNTIME HIP
+#endif
 
 namespace ripples {
 
@@ -85,7 +93,7 @@ class MPIStreamingFindMostInfluential {
         d_cpu_counters_(nullptr) {
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
 
-#ifdef RIPPLES_ENABLE_CUDA
+#if defined(RIPPLES_ENABLE_CUDA) || defined(RIPPLES_ENABLE_HIP)
     // Get Number of device and allocate 1 thread each.
     // num_gpu_workers_ = cuda_num_devices();
     num_cpu_workers_ -= num_gpu_workers_;
@@ -97,15 +105,18 @@ class MPIStreamingFindMostInfluential {
 #pragma omp parallel num_threads(num_gpu_workers_)
       {
         size_t rank = omp_get_thread_num();
-        cuda_set_device(rank);
-        cuda_malloc(reinterpret_cast<void **>(&d_counters_[rank]),
-                    sizeof(uint32_t) * G.num_nodes());
+        GPU<RUNTIME>::set_device(rank);
+        GPU<RUNTIME>::device_malloc(
+            reinterpret_cast<void **>(&d_counters_[rank]),
+            sizeof(uint32_t) * G.num_nodes());
 
         if (rank == 0) {
-          cuda_malloc(reinterpret_cast<void **>(&d_cpu_counters_),
-                      sizeof(uint32_t) * G.num_nodes());
-          cuda_malloc(reinterpret_cast<void **>(&d_cpu_reduced_counters_),
-                      sizeof(uint32_t) * G.num_nodes());
+          GPU<RUNTIME>::device_malloc(
+              reinterpret_cast<void **>(&d_cpu_counters_),
+              sizeof(uint32_t) * G.num_nodes());
+          GPU<RUNTIME>::device_malloc(
+              reinterpret_cast<void **>(&d_cpu_reduced_counters_),
+              sizeof(uint32_t) * G.num_nodes());
         }
       }
     }
@@ -114,7 +125,7 @@ class MPIStreamingFindMostInfluential {
     workers_.push_back(new CPUFindMostInfluentialWorker<GraphTy>(
         vertex_coverage_, queue_storage_, RRRsets_.begin(), RRRsets_.end(),
         num_cpu_workers_, d_cpu_counters_));
-#ifdef RIPPLES_ENABLE_CUDA
+#if defined(RIPPLES_ENABLE_CUDA) || defined(RIPPLES_ENABLE_HIP)
     if (num_gpu_workers_ == 0) return;
 
     // Define Reduction tree on GPU workers.
@@ -136,13 +147,13 @@ class MPIStreamingFindMostInfluential {
   }
 
   ~MPIStreamingFindMostInfluential() {
-#ifdef RIPPLES_ENABLE_CUDA
+#if defined(RIPPLES_ENABLE_CUDA) || defined (RIPPLES_ENABLE_HIP)
     for (auto b : d_counters_) {
-      cuda_free(b);
+      GPU<RUNTIME>::device_free(b);
     }
     if (num_gpu_workers_ > 0) {
-      cuda_free(d_cpu_counters_);
-      cuda_free(d_cpu_reduced_counters_);
+      GPU<RUNTIME>::device_free(d_cpu_counters_);
+      GPU<RUNTIME>::device_free(d_cpu_reduced_counters_);
     }
 #endif
     for (auto w : workers_) {
@@ -162,13 +173,13 @@ class MPIStreamingFindMostInfluential {
     uint32_t *dest = reduced_vertex_coverage_.data();
     uint32_t *src = vertex_coverage_.data();
 
-#if RIPPLES_ENABLE_CUDA
+#if defined(RIPPLES_ENABLE_CUDA) || defined(RIPPLES_ENABLE_HIP)
     if (num_gpu_workers_ != 0) {
       dest = d_cpu_reduced_counters_;
       src = d_cpu_counters_;
 
-      cuda_memset(reinterpret_cast<void *>(src), 0,
-                  sizeof(uint32_t) * vertex_coverage_.size());
+      GPU<RUNTIME>::memset(reinterpret_cast<void *>(src), 0,
+                           sizeof(uint32_t) * vertex_coverage_.size());
 
       for (ssize_t i = reduction_steps_; i >= 0; --i) {
 #pragma omp parallel num_threads(num_gpu_workers_ + 1)
@@ -181,14 +192,14 @@ class MPIStreamingFindMostInfluential {
 
       // std::cout << "Before Reduction " << src << std::endl;
       std::vector<uint32_t> tmp(vertex_coverage_.size(), 0);
-      cuda_set_device(0);
+      GPU<RUNTIME>::set_device(0);
 
-      cuda_memset(reinterpret_cast<void *>(dest), 0,
-                  sizeof(uint32_t) * vertex_coverage_.size());
+      GPU<RUNTIME>::memset(reinterpret_cast<void *>(dest), 0,
+                           sizeof(uint32_t) * vertex_coverage_.size());
 
-      cuda_d2h(reinterpret_cast<void *>(tmp.data()),
-               reinterpret_cast<void *>(src),
-               sizeof(uint32_t) * vertex_coverage_.size());
+      GPU<RUNTIME>::d2h(reinterpret_cast<void *>(tmp.data()),
+                        reinterpret_cast<void *>(src),
+                        sizeof(uint32_t) * vertex_coverage_.size());
 
       // MPI_Reduce(src, dest, vertex_coverage_.size(),
       // 	    MPI_UINT32_T, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -209,9 +220,9 @@ class MPIStreamingFindMostInfluential {
       // << std::endl;
       // }
 
-      cuda_h2d(reinterpret_cast<void *>(dest),
-               reinterpret_cast<void *>(reduced_vertex_coverage_.data()),
-               sizeof(uint32_t) * vertex_coverage_.size());
+      GPU<RUNTIME>::h2d(reinterpret_cast<void *>(dest),
+                        reinterpret_cast<void *>(reduced_vertex_coverage_.data()),
+                        sizeof(uint32_t) * vertex_coverage_.size());
     } else
 #endif
     {
@@ -233,59 +244,15 @@ class MPIStreamingFindMostInfluential {
     return queue;
   }
 
-  std::pair<vertex_type, size_t> get_next_DIiMM_seed(
-    std::vector<std::vector<size_t>>& coverage_vector, 
-    std::pair<size_t, size_t>& last_vertex
-  )
-  {
-    ReduceCounters();
-
-    if (mpi_rank == 0) { // DIiMM: this code is the only different code (outside of preprocessing), use D to select next seed.
-
-      while (last_vertex.first > 0)
-      {
-        while (last_vertex.second < coverage_vector[last_vertex.first].size())
-        {
-          const auto & vertex = coverage_vector[last_vertex.first][last_vertex.second];
-
-          if (last_vertex.first > reduced_vertex_coverage_[vertex])
-          {
-            // outdated case
-            coverage_vector[reduced_vertex_coverage_[vertex]].push_back(vertex);
-            last_vertex.second++;
-          }
-          else
-          {
-            // otherwise seed has been found
-            coveredAndSelected[0] += reduced_vertex_coverage_[vertex];
-            coveredAndSelected[1] = vertex;
-
-            last_vertex.second++;
-            goto RETURN_RESULT;
-          }
-        }
-
-        last_vertex.second = 0;
-        last_vertex.first--;
-      }
-    }
-
-    RETURN_RESULT:
-
-    MPI_Bcast(&coveredAndSelected, 2, MPI_UINT32_T, 0, MPI_COMM_WORLD);
-
-    return std::pair<vertex_type, size_t>(coveredAndSelected[1], coveredAndSelected[0]);
-  }
-
   std::pair<vertex_type, size_t> getNextSeed(priorityQueue &queue_) {
     ReduceCounters();
-#ifdef RIPPLES_ENABLE_CUDA
+#if defined(RIPPLES_ENABLE_CUDA) || defined(RIPPLES_ENABLE_HIP)
     if (num_gpu_workers_ != 0) {
       uint32_t *global_counter = d_cpu_reduced_counters_;
 
       if (mpi_rank == 0) {
         cuda_set_device(0);
-        auto result = CudaMaxElement(global_counter, vertex_coverage_.size());
+        auto result = GPUMaxElement(global_counter, vertex_coverage_.size());
         // std::cout << "Max Element " << result.first << " " << result.second
         // << std::endl;
         coveredAndSelected[0] += result.second;
@@ -299,7 +266,7 @@ class MPIStreamingFindMostInfluential {
                                             coveredAndSelected[0]);
     }
 #endif
-    if (mpi_rank == 0) { // DIiMM: this code is the only different code (outside of preprocessing), use D to select next seed.
+    if (mpi_rank == 0) {
 
       uint32_t vertex = 0;
       uint32_t coverage = 0;
@@ -330,7 +297,7 @@ class MPIStreamingFindMostInfluential {
       coveredAndSelected[1] = vertex;
 
     }
-    MPI_Bcast(&coveredAndSelected, 2, MPI_UINT32_T, 0, MPI_COMM_WORLD); // DIiMM: Stays the same
+    MPI_Bcast(&coveredAndSelected, 2, MPI_UINT32_T, 0, MPI_COMM_WORLD);
 
     return std::pair<vertex_type, size_t>(coveredAndSelected[1],
                                           coveredAndSelected[0]);
@@ -367,76 +334,6 @@ class MPIStreamingFindMostInfluential {
       }
     }
     workers_[0]->set_first_rrr_set(indices[0].pivot);
-  }
-
-  auto find_most_influential_set_using_diimm(size_t k)
-  {
-    omp_set_max_active_levels(2);
-
-    LoadDataToDevice();
-
-    InitialCount();
-    // std::cout << "Initial Count Done" << std::endl;
-
-    std::vector<vertex_type> result;
-    result.reserve(k);
-
-    // DIiMM: Build initial global histogram. Do this by reducing local histograms. 
-    //  After mpi_reduce, sort by set size to build vector D.This data structure 
-    //  becomes persistant. 
-
-    ReduceCounters(); // TODO: Verify correctness of calling this function here
-    uint32_t max_coverage = 0; 
-    
-    for (const auto & m : this->reduced_vertex_coverage_)
-    {
-      max_coverage = std::max(m, max_coverage);
-    }
-
-    std::vector<std::vector<size_t>> coverage_vector(max_coverage + 1);
-
-    for (size_t i = 0; i < this->reduced_vertex_coverage_.size(); i++)
-    {
-      coverage_vector[this->reduced_vertex_coverage_[i]].push_back(i);
-    }
-
-    std::pair<size_t, size_t> last_checked_coverage = std::make_pair((size_t)max_coverage, 0);
-
-    std::chrono::duration<double, std::milli> seedSelection(0);
-    while (true) {
-      //      std::cout << "Get Seed" << std::endl;
-      auto start = std::chrono::high_resolution_clock::now();
-      auto element = get_next_DIiMM_seed(coverage_vector, last_checked_coverage);
-      auto end = std::chrono::high_resolution_clock::now();
-
-      seedSelection += end - start;
-
-      result.push_back(element.first);
-
-      if (result.size() == k) break;
-
-      // std::cout << "Update counters" << std::endl;
-      // std::cout << *std::max_element(vertex_coverage_.begin(), vertex_coverage_.end()) << std::endl;
-      UpdateCounters(element.first);
-      // std::cout << "Done update counters" << std::endl;
-      // std::cout << *std::max_element(vertex_coverage_.begin(), vertex_coverage_.end()) << std::endl;
-    }
-
-    int world_size = 0;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    double f = double(coveredAndSelected[0]) / (world_size * RRRsets_.size());
-    // if (mpi_rank == 0) {
-    //   std::cout << f << " = " << double(coveredAndSelected[0]) << "/ (" <<
-    //   world_size << " * " <<
-    //       RRRsets_.size() << ")" << std::endl;
-    // }
-    // double f = double(RRRsets_.size() - uncovered) / RRRsets_.size();
-
-    // std::cout << "#### " << seedSelection.count() << std::endl;
-
-    omp_set_max_active_levels(1);
-
-    return std::make_pair(f, result);
   }
 
   auto find_most_influential_set(size_t k) {
@@ -629,20 +526,13 @@ auto FindMostInfluentialSet(const GraphTy &G, const ConfTy &CFG,
     num_max_cpu =
         std::min<size_t>(omp_get_max_threads(), CFG.seed_select_max_workers);
   }
-#ifdef RIPPLES_ENABLE_CUDA
+#if defined(RIPPLES_ENABLE_CUDA) || defined(RIPPLES_ENABLE_HIP)
   if (enableGPU) {
     num_gpu = std::min(cuda_num_devices(), CFG.seed_select_max_gpu_workers);
   }
 #endif
   MPIStreamingFindMostInfluential<GraphTy> SE(G, RRRsets, num_max_cpu, num_gpu);
-  if (CFG.use_diimm == true)
-  {
-    return SE.find_most_influential_set_using_diimm(CFG.k);
-  }
-  else 
-  {
-    return SE.find_most_influential_set(CFG.k);
-  }
+  return SE.find_most_influential_set(CFG.k);
 }
 
 }  // namespace ripples

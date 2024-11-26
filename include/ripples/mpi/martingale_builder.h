@@ -1,7 +1,9 @@
 
+#ifndef RIPPLES_MPI_MARGINGALE_BUILDER_H 
+#define RIPPLES_MPI_MARGINGALE_BUILDER_H
 
-#include "ripples/generate_rrr_sets.h"
-#include "math.h"
+namespace ripples {
+namespace mpi {
 
 class MartingleBuilder {
     public:
@@ -140,3 +142,7 @@ class MartingleBuilder {
         }
     }
 };
+
+}
+}
+#endif
